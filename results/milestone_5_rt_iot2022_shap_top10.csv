@@ -1,0 +1,11 @@
+rank,feature,mean_abs_shap
+1,Unnamed: 0,0.8238152
+2,fwd_pkts_payload.min,0.581961
+3,id.resp_p,0.47922114
+4,fwd_last_window_size,0.2964504
+5,flow_iat.min,0.2543881
+6,flow_pkts_payload.avg,0.22000217
+7,id.orig_p,0.18429527
+8,fwd_URG_flag_count,0.18414982
+9,fwd_header_size_min,0.14373213
+10,service_mqtt,0.14312766

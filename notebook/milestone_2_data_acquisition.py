@@ -49,6 +49,18 @@ print("\nNSL-KDD downloaded successfully!")
 
 print("NSL-KDD training shape:", nsl_train.shape)
 print("NSL-KDD testing shape :", nsl_test.shape)
+# Save NSL-KDD train/test datasets
+nsl_train.to_csv(
+    "data/nsl_kdd_train.csv",
+    index=False
+)
+
+nsl_test.to_csv(
+    "data/nsl_kdd_test.csv",
+    index=False
+)
+
+print("\nNSL-KDD train/test files saved to data/")
 
 
 # ------------------------------------------------------------

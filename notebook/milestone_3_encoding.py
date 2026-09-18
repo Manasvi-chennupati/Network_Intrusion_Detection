@@ -21,8 +21,8 @@ print("=" * 60)
 # 1. Load RT-IoT2022 train and test data
 # ------------------------------------------------------------
 
-rt_train = pd.read_csv("data/rt_iot2022_train.csv")
-rt_test = pd.read_csv("data/rt_iot2022_test.csv")
+rt_train = pd.read_csv("data/rt_iot2022_train.csv").drop(columns=["Unnamed: 0"])
+rt_test = pd.read_csv("data/rt_iot2022_test.csv").drop(columns=["Unnamed: 0"])
 
 print("\nRT-IoT2022 train shape:", rt_train.shape)
 print("RT-IoT2022 test shape :", rt_test.shape)

@@ -1,16 +1,30 @@
 # ============================================================
 # MILESTONE 5 — SHAP GLOBAL FEATURE IMPORTANCE
-# XAI Feature Importance for Intrusion Detection
+# ============================================================
+# Requirement:
+# Generate SHAP global importance via TreeSHAP over the
+# FULL TEST SET and rank features by mean |SHAP value|.
+#
+# Datasets:
+#   1. NSL-KDD
+#   2. RT-IoT2022
+#
+# Important:
+# RT-IoT2022 "Unnamed: 0" is explicitly excluded.
 # ============================================================
 
+import os
 import pandas as pd
 import numpy as np
+
 from xgboost import XGBClassifier, DMatrix
 
 
 # ============================================================
-# FIXED XGBOOST PARAMETERS — SAME AS MILESTONE 4
+# SETTINGS
 # ============================================================
+
+os.makedirs("results", exist_ok=True)
 
 xgb_params = {
     "n_estimators": 200,
@@ -25,13 +39,106 @@ xgb_params = {
 
 
 # ============================================================
-# NSL-KDD
+# FUNCTION:
+# Calculate TreeSHAP global importance
 # ============================================================
 
-print("=" * 60)
-print("LOADING NSL-KDD DATA")
-print("=" * 60)
+def calculate_tree_shap_importance(model, X_test):
 
+    booster = model.get_booster()
+
+    # XGBoost native DMatrix
+    dmatrix = DMatrix(X_test)
+
+    # Native TreeSHAP contributions
+    contributions = booster.predict(
+        dmatrix,
+        pred_contribs=True
+    )
+
+    print("Raw SHAP contribution shape:", contributions.shape)
+
+    # --------------------------------------------------------
+    # Binary classification
+    # Shape:
+    # (samples, features + 1)
+    # Last column = bias/base value
+    # --------------------------------------------------------
+
+    if contributions.ndim == 2:
+
+        shap_values = contributions[:, :-1]
+
+        mean_abs_shap = np.abs(
+            shap_values
+        ).mean(axis=0)
+
+    # --------------------------------------------------------
+    # Multiclass classification
+    #
+    # Shape:
+    # (samples, classes, features + 1)
+    #
+    # Remove bias column and average absolute SHAP
+    # over samples AND classes.
+    # --------------------------------------------------------
+
+    elif contributions.ndim == 3:
+
+        shap_values = contributions[:, :, :-1]
+
+        mean_abs_shap = np.abs(
+            shap_values
+        ).mean(axis=(0, 1))
+
+    else:
+        raise ValueError(
+            f"Unexpected SHAP contribution shape: "
+            f"{contributions.shape}"
+        )
+
+    # Safety check
+    if len(mean_abs_shap) != len(X_test.columns):
+        raise ValueError(
+            "Number of SHAP importance values does not "
+            "match number of features."
+        )
+
+    # Create ranking
+    importance = pd.DataFrame({
+        "feature": X_test.columns,
+        "mean_abs_shap": mean_abs_shap
+    })
+
+    importance = importance.sort_values(
+        by="mean_abs_shap",
+        ascending=False
+    ).reset_index(drop=True)
+
+    importance["rank"] = (
+        importance.index + 1
+    )
+
+    importance = importance[
+        [
+            "rank",
+            "feature",
+            "mean_abs_shap"
+        ]
+    ]
+
+    return importance
+
+
+# ============================================================
+# PART 1 — NSL-KDD
+# ============================================================
+
+print("\n" + "=" * 70)
+print("MILESTONE 5 — NSL-KDD TREE SHAP")
+print("=" * 70)
+
+# Load encoded data
 nsl_X_train = pd.read_csv(
     "data/nsl_kdd_X_train_encoded.csv"
 )
@@ -44,18 +151,14 @@ nsl_y_train = pd.read_csv(
     "data/nsl_kdd_y_train_encoded.csv"
 ).squeeze()
 
-print("NSL-KDD training shape:", nsl_X_train.shape)
-print("NSL-KDD full test shape:", nsl_X_test.shape)
+nsl_y_test = pd.read_csv(
+    "data/nsl_kdd_y_test_encoded.csv"
+).squeeze()
 
+print("Training shape:", nsl_X_train.shape)
+print("Full test shape:", nsl_X_test.shape)
 
-# ============================================================
-# TRAIN NSL-KDD FIXED MODEL
-# ============================================================
-
-print("\n" + "=" * 60)
-print("TRAINING FIXED NSL-KDD XGBOOST MODEL")
-print("=" * 60)
-
+# Train fixed XGBoost model
 nsl_model = XGBClassifier(
     **xgb_params,
     objective="binary:logistic"
@@ -66,103 +169,45 @@ nsl_model.fit(
     nsl_y_train
 )
 
-print("NSL-KDD model training completed.")
+print("NSL-KDD XGBoost model trained.")
 
-
-# ============================================================
-# NSL-KDD TREE SHAP
-# ============================================================
-
-print("\n" + "=" * 60)
-print("CALCULATING NSL-KDD TREE SHAP VALUES")
-print("=" * 60)
-
-nsl_booster = nsl_model.get_booster()
-
-# XGBoost Booster.predict requires DMatrix
-nsl_dmatrix = DMatrix(nsl_X_test)
-
-# Native XGBoost TreeSHAP
-nsl_contrib = nsl_booster.predict(
-    nsl_dmatrix,
-    pred_contribs=True
+# Generate TreeSHAP importance
+nsl_importance = calculate_tree_shap_importance(
+    nsl_model,
+    nsl_X_test
 )
 
-print("NSL-KDD contribution matrix shape:",
-      nsl_contrib.shape)
-
-# Last column is the bias/base-value contribution.
-# Remove it because we only rank actual features.
-nsl_shap_values = nsl_contrib[:, :-1]
-
-print("NSL-KDD SHAP matrix shape:",
-      nsl_shap_values.shape)
-
-
-# ============================================================
-# NSL-KDD GLOBAL IMPORTANCE
-# mean(|SHAP|)
-# ============================================================
-
-nsl_shap_importance = pd.DataFrame({
-    "feature": nsl_X_test.columns,
-    "mean_abs_shap": np.abs(
-        nsl_shap_values
-    ).mean(axis=0)
-})
-
-nsl_shap_importance = (
-    nsl_shap_importance
-    .sort_values(
-        by="mean_abs_shap",
-        ascending=False
-    )
-    .reset_index(drop=True)
+# Save complete ranking
+nsl_output = (
+    "results/"
+    "nsl_kdd_shap_global_importance.csv"
 )
 
-nsl_shap_importance["rank"] = (
-    nsl_shap_importance.index + 1
-)
-
-nsl_shap_importance = nsl_shap_importance[
-    [
-        "rank",
-        "feature",
-        "mean_abs_shap"
-    ]
-]
-
-
-# ============================================================
-# SAVE NSL-KDD RESULTS
-# ============================================================
-
-nsl_shap_importance.to_csv(
-    "results/nsl_kdd_shap_global_importance.csv",
+nsl_importance.to_csv(
+    nsl_output,
     index=False
 )
 
-print("\nTop 10 NSL-KDD SHAP features:")
-print(
-    nsl_shap_importance
-    .head(10)
-    .to_string(index=False)
-)
+print("\nNSL-KDD SHAP results saved to:")
+print(nsl_output)
 
+print("\nNSL-KDD TOP 10 FEATURES:")
 print(
-    "\nSaved:"
-    " results/nsl_kdd_shap_global_importance.csv"
+    nsl_importance.head(10).to_string(
+        index=False
+    )
 )
 
 
 # ============================================================
-# RT-IoT2022
+# PART 2 — RT-IoT2022
 # ============================================================
 
-print("\n" + "=" * 60)
-print("LOADING RT-IoT2022 DATA")
-print("=" * 60)
+print("\n" + "=" * 70)
+print("MILESTONE 5 — RT-IoT2022 TREE SHAP")
+print("=" * 70)
 
+# Load encoded data
 rt_X_train = pd.read_csv(
     "data/rt_iot2022_X_train_encoded.csv"
 )
@@ -175,23 +220,44 @@ rt_y_train = pd.read_csv(
     "data/rt_iot2022_y_train_encoded.csv"
 ).squeeze()
 
-print("RT-IoT2022 training shape:",
-      rt_X_train.shape)
+rt_y_test = pd.read_csv(
+    "data/rt_iot2022_y_test_encoded.csv"
+).squeeze()
 
-print("RT-IoT2022 full test shape:",
-      rt_X_test.shape)
+# ------------------------------------------------------------
+# IMPORTANT LEAKAGE CHECK
+# ------------------------------------------------------------
 
+if "Unnamed: 0" in rt_X_train.columns:
 
-# ============================================================
-# TRAIN RT-IoT2022 FIXED MODEL
-# ============================================================
+    raise ValueError(
+        "\nERROR: 'Unnamed: 0' is still present in "
+        "RT-IoT2022 encoded training data.\n\n"
+        "Regenerate Milestone 3 encoded files after "
+        "dropping 'Unnamed: 0'."
+    )
 
-print("\n" + "=" * 60)
-print("TRAINING FIXED RT-IoT2022 XGBOOST MODEL")
-print("=" * 60)
+if "Unnamed: 0" in rt_X_test.columns:
 
+    raise ValueError(
+        "\nERROR: 'Unnamed: 0' is still present in "
+        "RT-IoT2022 encoded test data.\n\n"
+        "Regenerate Milestone 3 encoded files after "
+        "dropping 'Unnamed: 0'."
+    )
+
+print("Leakage check: PASSED")
+print("'Unnamed: 0' is NOT present.")
+
+print("\nTraining shape:", rt_X_train.shape)
+print("Full test shape:", rt_X_test.shape)
+
+# Number of classes
 rt_n_classes = rt_y_train.nunique()
 
+print("Number of classes:", rt_n_classes)
+
+# Train fixed multiclass XGBoost model
 rt_model = XGBClassifier(
     **xgb_params,
     objective="multi:softprob",
@@ -203,152 +269,137 @@ rt_model.fit(
     rt_y_train
 )
 
-print("RT-IoT2022 model training completed.")
-print("Number of classes:", rt_n_classes)
+print("RT-IoT2022 XGBoost model trained.")
 
-
-# ============================================================
-# RT-IoT2022 TREE SHAP
-# ============================================================
-
-print("\n" + "=" * 60)
-print("CALCULATING RT-IoT2022 TREE SHAP VALUES")
-print("=" * 60)
-
-rt_booster = rt_model.get_booster()
-
-# XGBoost Booster.predict requires DMatrix
-rt_dmatrix = DMatrix(rt_X_test)
-
-# Native XGBoost TreeSHAP
-rt_contrib = rt_booster.predict(
-    rt_dmatrix,
-    pred_contribs=True
+# Generate TreeSHAP importance
+rt_importance = calculate_tree_shap_importance(
+    rt_model,
+    rt_X_test
 )
 
-print(
-    "Raw RT-IoT2022 contribution shape:",
-    rt_contrib.shape
+# Save complete ranking
+rt_output = (
+    "results/"
+    "rt_iot2022_shap_global_importance.csv"
 )
 
-
-# ============================================================
-# HANDLE RT-IoT2022 MULTICLASS SHAP OUTPUT
-# ============================================================
-
-if rt_contrib.ndim == 3:
-
-    # Shape:
-    # samples × classes × (features + bias)
-
-    # Remove bias/base-value column
-    rt_shap_values = rt_contrib[:, :, :-1]
-
-    print(
-        "RT-IoT2022 SHAP values shape:",
-        rt_shap_values.shape
-    )
-
-    # Mean absolute SHAP:
-    # 1. absolute value
-    # 2. mean over samples
-    # 3. mean over classes
-
-    rt_shap_importance_values = (
-        np.abs(rt_shap_values)
-        .mean(axis=(0, 1))
-    )
-
-else:
-
-    # Fallback if XGBoost returns 2D output
-
-    # Remove bias/base-value column
-    rt_shap_values = rt_contrib[:, :-1]
-
-    print(
-        "RT-IoT2022 SHAP values shape:",
-        rt_shap_values.shape
-    )
-
-    rt_shap_importance_values = (
-        np.abs(rt_shap_values)
-        .mean(axis=0)
-    )
-
-
-# ============================================================
-# RT-IoT2022 GLOBAL IMPORTANCE
-# ============================================================
-
-print(
-    "RT-IoT2022 feature importance shape:",
-    rt_shap_importance_values.shape
-)
-
-rt_shap_importance = pd.DataFrame({
-    "feature": rt_X_test.columns,
-    "mean_abs_shap": rt_shap_importance_values
-})
-
-rt_shap_importance = (
-    rt_shap_importance
-    .sort_values(
-        by="mean_abs_shap",
-        ascending=False
-    )
-    .reset_index(drop=True)
-)
-
-rt_shap_importance["rank"] = (
-    rt_shap_importance.index + 1
-)
-
-rt_shap_importance = rt_shap_importance[
-    [
-        "rank",
-        "feature",
-        "mean_abs_shap"
-    ]
-]
-
-
-# ============================================================
-# SAVE RT-IoT2022 RESULTS
-# ============================================================
-
-rt_shap_importance.to_csv(
-    "results/rt_iot2022_shap_global_importance.csv",
+rt_importance.to_csv(
+    rt_output,
     index=False
 )
 
-print("\nTop 10 RT-IoT2022 SHAP features:")
+print("\nRT-IoT2022 SHAP results saved to:")
+print(rt_output)
+
+print("\nRT-IoT2022 TOP 10 FEATURES:")
 print(
-    rt_shap_importance
+    rt_importance.head(10).to_string(
+        index=False
+    )
+)
+
+
+# ============================================================
+# CREATE VERIFICATION SUMMARY
+# ============================================================
+
+print("\n" + "=" * 70)
+print("CREATING SHAP VERIFICATION SUMMARY")
+print("=" * 70)
+
+nsl_top10 = (
+    nsl_importance
     .head(10)
-    .to_string(index=False)
+    .copy()
+)
+
+nsl_top10.insert(
+    0,
+    "dataset",
+    "NSL-KDD"
+)
+
+rt_top10 = (
+    rt_importance
+    .head(10)
+    .copy()
+)
+
+rt_top10.insert(
+    0,
+    "dataset",
+    "RT-IoT2022"
+)
+
+shap_top10_summary = pd.concat(
+    [
+        nsl_top10,
+        rt_top10
+    ],
+    ignore_index=True
+)
+
+summary_output = (
+    "results/"
+    "milestone_5_shap_top10_summary.csv"
+)
+
+shap_top10_summary.to_csv(
+    summary_output,
+    index=False
+)
+
+print("\nVerification summary saved to:")
+print(summary_output)
+
+
+# ============================================================
+# FINAL VERIFICATION
+# ============================================================
+
+print("\n" + "=" * 70)
+print("MILESTONE 5 VERIFICATION")
+print("=" * 70)
+
+print("\nNSL-KDD:")
+print(
+    nsl_importance.head(10).to_string(
+        index=False
+    )
+)
+
+print("\nRT-IoT2022:")
+print(
+    rt_importance.head(10).to_string(
+        index=False
+    )
+)
+
+# Check feature counts
+print("\nFeature counts:")
+print(
+    "NSL-KDD:",
+    len(nsl_importance)
 )
 
 print(
-    "\nSaved:"
-    " results/rt_iot2022_shap_global_importance.csv"
+    "RT-IoT2022:",
+    len(rt_importance)
 )
 
+# Check duplicate features
+print("\nDuplicate feature check:")
 
-# ============================================================
-# MILESTONE 5 COMPLETE
-# ============================================================
+print(
+    "NSL-KDD duplicates:",
+    nsl_importance["feature"].duplicated().sum()
+)
 
-print("\n" + "=" * 60)
+print(
+    "RT-IoT2022 duplicates:",
+    rt_importance["feature"].duplicated().sum()
+)
+
+print("\n" + "=" * 70)
 print("MILESTONE 5 COMPLETED")
-print("=" * 60)
-
-print(
-    "NSL-KDD:"
-    " results/nsl_kdd_shap_global_importance.csv"
-)
-
-print(
-    "RT-IoT2022:"
-    " results/rt_iot2022_shap_global_importance.csv"
-)
+print("=" * 70)
